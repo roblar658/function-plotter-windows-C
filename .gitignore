@@ -1,0 +1,9 @@
+# Binaries and object files
+*.exe
+*.o
+*.obj
+
+# Windows desktop / explorer artifacts
+Thumbs.db
+ehthumbs.db
+Desktop.ini
