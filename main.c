@@ -22,7 +22,7 @@
 #endif
 
 /* -------------------------------------------------------------
- * Control IDs
+ * Control & Menu IDs
  * ------------------------------------------------------------- */
 #define ID_EDIT_FUNC        1001
 #define ID_EDIT_TITLE       1002
@@ -37,6 +37,12 @@
 #define ID_BTN_ZOOM_BOTH_OUT 1011
 #define ID_BTN_RESET        1012
 #define ID_BTN_EXCEL        1013
+
+#define ID_FILE_SAVE        2001
+#define ID_FILE_SAVE_EXCEL  2002
+#define ID_FILE_SAVE_PNG    2003
+#define ID_FILE_EXIT        2004
+#define ID_HELP_ABOUT       2005
 
 /* -------------------------------------------------------------
  * Math Expression Abstract Syntax Tree & Parser
@@ -1274,6 +1280,63 @@ static bool export_to_excel(HWND hwnd, const char* filepath) {
     }
 }
 
+static bool export_to_png_file(HWND hwnd, const char* filepath) {
+    size_t png_size = 0;
+    uint8_t* png_data = render_plot_to_png(1200, 750, &png_size);
+    if (!png_data || png_size == 0) {
+        MessageBoxA(hwnd, "Kunne ikke generere bilde av grafen.", "Eksportfeil", MB_ICONERROR);
+        return false;
+    }
+    FILE* fp = fopen(filepath, "wb");
+    if (!fp) {
+        free(png_data);
+        MessageBoxA(hwnd, "Kunne ikke åpne filen for skriving.", "Eksportfeil", MB_ICONERROR);
+        return false;
+    }
+    fwrite(png_data, 1, png_size, fp);
+    fclose(fp);
+    free(png_data);
+
+    char msg[MAX_PATH + 100];
+    snprintf(msg, sizeof(msg), "Grafen ble vellykket lagret som bilde til:\n%s", filepath);
+    MessageBoxA(hwnd, msg, "Lagret bilde", MB_OK | MB_ICONINFORMATION);
+    return true;
+}
+
+static void create_main_menu(HWND hwnd) {
+    HMENU hMenuBar  = CreateMenu();
+    HMENU hFileMenu = CreatePopupMenu();
+    HMENU hViewMenu = CreatePopupMenu();
+    HMENU hHelpMenu = CreatePopupMenu();
+
+    /* Fil-meny (Standard Windows Lagre / Lagre som) */
+    AppendMenuA(hFileMenu, MF_STRING, ID_FILE_SAVE,       "&Lagre...\tCtrl+S");
+    AppendMenuA(hFileMenu, MF_STRING, ID_FILE_SAVE_EXCEL, "Lagre som &Excel (.xlsx)...");
+    AppendMenuA(hFileMenu, MF_STRING, ID_FILE_SAVE_PNG,   "Lagre som &bilde (.png)...");
+    AppendMenuA(hFileMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(hFileMenu, MF_STRING, ID_FILE_EXIT,       "&Avslutt\tAlt+F4");
+
+    /* Vis-meny */
+    AppendMenuA(hViewMenu, MF_STRING, ID_BTN_ZOOM_BOTH_IN,  "Zoom &inn (begge akser)\t+");
+    AppendMenuA(hViewMenu, MF_STRING, ID_BTN_ZOOM_BOTH_OUT, "Zoom &ut (begge akser)\t-");
+    AppendMenuA(hViewMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(hViewMenu, MF_STRING, ID_BTN_ZOOM_X_IN,     "Zoom inn &X-akse\tX");
+    AppendMenuA(hViewMenu, MF_STRING, ID_BTN_ZOOM_X_OUT,    "Zoom ut X-akse\tShift+X");
+    AppendMenuA(hViewMenu, MF_STRING, ID_BTN_ZOOM_Y_IN,     "Zoom inn &Y-akse\tY");
+    AppendMenuA(hViewMenu, MF_STRING, ID_BTN_ZOOM_Y_OUT,    "Zoom ut Y-akse\tShift+Y");
+    AppendMenuA(hViewMenu, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(hViewMenu, MF_STRING, ID_BTN_RESET,         "&Nullstill visning\tR");
+
+    /* Hjelp-meny */
+    AppendMenuA(hHelpMenu, MF_STRING, ID_HELP_ABOUT,        "&Om Funksjonsplotter...");
+
+    AppendMenuA(hMenuBar, MF_POPUP, (UINT_PTR)hFileMenu, "&Fil");
+    AppendMenuA(hMenuBar, MF_POPUP, (UINT_PTR)hViewMenu, "&Vis");
+    AppendMenuA(hMenuBar, MF_POPUP, (UINT_PTR)hHelpMenu, "&Hjelp");
+
+    SetMenu(hwnd, hMenuBar);
+}
+
 /* -------------------------------------------------------------
  * UI Creation & Management
  * ------------------------------------------------------------- */
@@ -1354,6 +1417,7 @@ static void update_from_ui(HWND hwnd) {
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_CREATE:
+            create_main_menu(hwnd);
             create_ui_controls(hwnd);
             update_from_ui(hwnd);
             return 0;
@@ -1392,6 +1456,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     reset_viewport();
                     InvalidateRect(hwnd, NULL, FALSE);
                     break;
+                case ID_FILE_SAVE:
+                case ID_FILE_SAVE_EXCEL:
                 case ID_BTN_EXCEL: {
                     char szFile[MAX_PATH] = "funksjonsgraf.xlsx";
                     OPENFILENAMEA ofn;
@@ -1409,6 +1475,48 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     }
                     break;
                 }
+                case ID_FILE_SAVE_PNG: {
+                    char szFile[MAX_PATH] = "funksjonsgraf.png";
+                    OPENFILENAMEA ofn;
+                    memset(&ofn, 0, sizeof(ofn));
+                    ofn.lStructSize = sizeof(ofn);
+                    ofn.hwndOwner = hwnd;
+                    ofn.lpstrFilter = "PNG-bilde (*.png)\0*.png\0Alle filer (*.*)\0*.*\0";
+                    ofn.lpstrFile = szFile;
+                    ofn.nMaxFile = sizeof(szFile);
+                    ofn.lpstrDefExt = "png";
+                    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+
+                    if (GetSaveFileNameA(&ofn)) {
+                        export_to_png_file(hwnd, szFile);
+                    }
+                    break;
+                }
+                case ID_FILE_EXIT:
+                    PostMessage(hwnd, WM_CLOSE, 0, 0);
+                    break;
+                case ID_HELP_ABOUT:
+                    MessageBoxA(hwnd,
+                        "C Interaktiv Funksjonsplotter\n\n"
+                        "Menylagring:\n"
+                        "  - Fil -> Lagre... (Ctrl+S)\n"
+                        "    Lagrer regneark i Excel-format (.xlsx) med:\n"
+                        "    1. Tabell med 1000 datapunkter for x og f(x)\n"
+                        "    2. Grafens tittel, formel og akseopplysninger\n"
+                        "    3. Innebygd bilde av funksjonsgrafen ved siden av tabellen\n\n"
+                        "  - Fil -> Lagre som bilde (.png)...\n"
+                        "    Lagrer et høyoppløselig PNG-bilde av grafen.\n\n"
+                        "Navigasjon:\n"
+                        "  - Dra grafen med musen for å panorere\n"
+                        "  - Rullehjul: Zoom begge akser\n"
+                        "  - Shift + Rullehjul: Zoom X-akse\n"
+                        "  - Ctrl + Rullehjul: Zoom Y-akse\n"
+                        "  - R: Nullstill visning\n\n"
+                        "Støttede matematiske funksjoner:\n"
+                        "  sin, cos, tan, asin, acos, atan, sinh, cosh, tanh,\n"
+                        "  sqrt, cbrt, exp, ln, log10, abs, floor, ceil, pi, e",
+                        "Om Funksjonsplotter", MB_OK | MB_ICONINFORMATION);
+                    break;
             }
             return 0;
         }
@@ -1502,7 +1610,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         case WM_KEYDOWN: {
             if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'S') {
-                SendMessage(hwnd, WM_COMMAND, MAKEWPARAM(ID_BTN_EXCEL, BN_CLICKED), (LPARAM)g_app.hBtnExcel);
+                SendMessage(hwnd, WM_COMMAND, MAKEWPARAM(ID_FILE_SAVE, 0), 0);
                 return 0;
             }
 

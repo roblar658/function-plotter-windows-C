@@ -6,6 +6,15 @@ Et lettvekts, frittstående Windows-program skrevet i ren C (Win32 API & GDI) fo
 
 ## Funksjoner
 
+- **Standard Windows-menylinje**:
+  - **Fil**:
+    - **Lagre... (`Ctrl + S`)**: Åpner standard lagre-dialog for Excel (`.xlsx`).
+    - **Lagre som Excel (.xlsx)...**: Genererer Excel-regneark med 1000 datapunkter og innebygd grafbilde.
+    - **Lagre som bilde (.png)...**: Lagrer et rent, høyoppløselig PNG-bilde av grafen.
+    - **Avslutt (`Alt + F4`)**: Lukker programmet.
+  - **Vis**: Menypunkter for zoom (begge akser, X-akse, Y-akse) og nullstilling av visningen.
+  - **Hjelp**: «Om Funksjonsplotter...» med hurtigtaster og liste over støttede funksjoner.
+
 - **Matematisk uttrykkstolker ($f(x)$)**:
   - Innebygd recursive-descent parser med operatorpresedens og implisitt multiplikasjon (f.eks. `2x`, `3sin(x)`, `(x+1)(x-1)`).
   - Operatorer: `+`, `-`, `*`, `/`, `^` (potens).
@@ -14,11 +23,11 @@ Et lettvekts, frittstående Windows-program skrevet i ren C (Win32 API & GDI) fo
   - Asymptote- og pol-håndtering (unngår vertikale feillinjer ved diskontinuiteter som $\tan(x)$ eller $1/x$).
 
 - **Zoom og navigasjon**:
-  - **Zoom kun X-akse**: Knappene `[X +]` / `[X -]`, tastene `X` / `Shift+X`, eller **`Shift` + rullehjul**.
-  - **Zoom kun Y-akse**: Knappene `[Y +]` / `[Y -]`, tastene `Y` / `Shift+Y`, eller **`Ctrl` + rullehjul**.
-  - **Zoom begge samtidig**: Knappene `[Begge +]` / `[Begge -]`, tastene `+` / `-`, eller standard **rullehjul**.
+  - **Zoom kun X-akse**: Menyvalg, knappene `[X +]` / `[X -]`, tastene `X` / `Shift+X`, eller **`Shift` + rullehjul**.
+  - **Zoom kun Y-akse**: Menyvalg, knappene `[Y +]` / `[Y -]`, tastene `Y` / `Shift+Y`, eller **`Ctrl` + rullehjul**.
+  - **Zoom begge samtidig**: Menyvalg, knappene `[Begge +]` / `[Begge -]`, tastene `+` / `-`, eller standard **rullehjul**.
   - **Panorering (dra grafen)**: Klikk og dra med venstre musetast, eller bruk piltastene.
-  - **Nullstill**: Knapp `[Nullstill visning]` eller tast `R` for å gjenopprette standard $[-10, 10]$ utsnitt.
+  - **Nullstill**: Menyvalg, knapp `[Nullstill visning]` eller tast `R` for å gjenopprette standard $[-10, 10]$ utsnitt.
 
 - **Tilpassbare akseetiketter og tittel**:
   - Egne tekstfelt for **Tittel**, **X-akseetikett** og **Y-akseetikett**.
@@ -28,7 +37,7 @@ Et lettvekts, frittstående Windows-program skrevet i ren C (Win32 API & GDI) fo
   - Trykk `Enter` i ethvert tekstfelt for å oppdatere grafen umiddelbart.
 
 - **Eksport til Excel med innebygd bilde (.xlsx)**:
-  - Egen knapp **`[Eksporter til Excel (.xlsx)]`** eller hurtigtast **`Ctrl + S`**.
+  - Tilgjengelig via **Fil -> Lagre...**, **Fil -> Lagre som Excel...**, hurtigtast **`Ctrl + S`**, eller verktøylinjeknapp.
   - Åpner standard Windows lagre-dialog.
   - Genererer en ekte OpenXML Excel-arbeidsbok (`.xlsx`) med:
     1. **Datatabell:** 1000 nøyaktig beregnede $(x, f(x))$-punkter over gjeldende utsnitt.
