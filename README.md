@@ -2,6 +2,8 @@
 
 A lightweight, standalone desktop function plotting application written in pure C for Windows (Win32 API & GDI). Zero external dependencies required.
 
+<img width="1435" height="1003" alt="image" src="https://github.com/user-attachments/assets/f73c71eb-fd18-4e8c-9511-489d985dc9fd" />
+
 ## Features
 
 - **Custom Expression Input ($f(x)$)**:
