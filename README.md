@@ -2,7 +2,9 @@
 
 Et lettvekts, frittstående Windows-program skrevet i ren C (Win32 API & GDI) for interaktiv plotting og analyse av matematiske funksjoner. Ingen eksterne biblioteker kreves.
 
-<img width="1441" height="996" alt="image" src="https://github.com/user-attachments/assets/e715640e-64e5-4b1a-bf17-46bde94a5799" />
+<img width="1490" height="1036" alt="image" src="https://github.com/user-attachments/assets/7a63eaad-a25d-4694-bf91-bf4429bc650b" />
+
+<img width="1917" height="1058" alt="image" src="https://github.com/user-attachments/assets/24b17e07-f109-4949-9ddf-89883b445df2" />
 
 ## Funksjoner
 
