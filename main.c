@@ -3,12 +3,16 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
+#include <commdlg.h>
+#include <shellapi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdarg.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -32,6 +36,7 @@
 #define ID_BTN_ZOOM_BOTH_IN 1010
 #define ID_BTN_ZOOM_BOTH_OUT 1011
 #define ID_BTN_RESET        1012
+#define ID_BTN_EXCEL        1013
 
 /* -------------------------------------------------------------
  * Math Expression Abstract Syntax Tree & Parser
@@ -323,7 +328,7 @@ static ExprNode* parse_power(Parser* p) {
 
     if (p->cur_type == TOK_POW) {
         next_token(p);
-        ExprNode* right = parse_unary(p); // Right-associative power
+        ExprNode* right = parse_unary(p);
         if (!right) {
             free_node(left);
             return NULL;
@@ -376,7 +381,7 @@ static ExprNode* parse_term(Parser* p) {
             n->left = left; n->right = right;
             left = n;
         } else if (can_start_primary(p->cur_type)) {
-            /* Implicit multiplication like 2x, x(x+1), sin(x)cos(x) */
+            /* Implicit multiplication */
             ExprNode* right = parse_unary(p);
             if (!right) { free_node(left); return NULL; }
             ExprNode* n = create_node(NODE_MUL);
@@ -465,6 +470,7 @@ typedef struct {
     HWND hBtnZoomYIn, hBtnZoomYOut;
     HWND hBtnZoomBothIn, hBtnZoomBothOut;
     HWND hBtnReset;
+    HWND hBtnExcel;
 
     /* Fonts */
     HFONT hFontTitle;
@@ -500,7 +506,6 @@ static void zoom_viewport(double factor_x, double factor_y, double center_x, dou
         g_app.y_max = center_y + (g_app.y_max - center_y) * factor_y;
     }
 
-    /* Prevent degenerate view */
     if (fabs(g_app.x_max - g_app.x_min) < 1e-12) {
         g_app.x_min = center_x - 1e-12;
         g_app.x_max = center_x + 1e-12;
@@ -570,57 +575,55 @@ static void format_tick_label(char* buf, size_t sz, double val, double step) {
 }
 
 /* -------------------------------------------------------------
- * Graph Rendering
+ * Graph Rendering (Supports Window and Export Modes)
  * ------------------------------------------------------------- */
-static void draw_graph(HDC hdc, RECT rcClient) {
-    /* Define layout */
-    int top_bar_height = 82;
-    int bottom_bar_height = 36;
+static void draw_graph(HDC hdc, RECT rcClient, bool for_export) {
+    int top_bar_height = for_export ? 0 : 82;
+    int bottom_bar_height = for_export ? 0 : 36;
     
     RECT rcGraph;
-    rcGraph.left   = 85;
-    rcGraph.top    = top_bar_height + 40;  /* Space for title */
-    rcGraph.right  = rcClient.right - 35;
-    rcGraph.bottom = rcClient.bottom - bottom_bar_height - 35; /* Space for X-label */
+    rcGraph.left   = for_export ? 95 : 85;
+    rcGraph.top    = for_export ? 65 : (top_bar_height + 40);
+    rcGraph.right  = rcClient.right - 40;
+    rcGraph.bottom = rcClient.bottom - bottom_bar_height - (for_export ? 50 : 35);
 
     if (rcGraph.right <= rcGraph.left + 50 || rcGraph.bottom <= rcGraph.top + 50) {
         return;
     }
 
-    /* 1. Fill Backgrounds */
-    HBRUSH hBrToolbar = CreateSolidBrush(RGB(245, 247, 250));
-    RECT rcTopBar = {0, 0, rcClient.right, top_bar_height};
-    FillRect(hdc, &rcTopBar, hBrToolbar);
-    DeleteObject(hBrToolbar);
+    /* 1. Backgrounds */
+    if (!for_export) {
+        HBRUSH hBrToolbar = CreateSolidBrush(RGB(245, 247, 250));
+        RECT rcTopBar = {0, 0, rcClient.right, top_bar_height};
+        FillRect(hdc, &rcTopBar, hBrToolbar);
+        DeleteObject(hBrToolbar);
 
-    /* Separator line below toolbar */
-    HPEN hPenSep = CreatePen(PS_SOLID, 1, RGB(218, 222, 229));
-    HPEN hOldPen = (HPEN)SelectObject(hdc, hPenSep);
-    MoveToEx(hdc, 0, top_bar_height, NULL);
-    LineTo(hdc, rcClient.right, top_bar_height);
+        HPEN hPenSep = CreatePen(PS_SOLID, 1, RGB(218, 222, 229));
+        HPEN hOldPen = (HPEN)SelectObject(hdc, hPenSep);
+        MoveToEx(hdc, 0, top_bar_height, NULL);
+        LineTo(hdc, rcClient.right, top_bar_height);
+        SelectObject(hdc, hOldPen);
+        DeleteObject(hPenSep);
+    }
 
-    /* Graph Canvas Background */
-    RECT rcCanvas = {0, top_bar_height + 1, rcClient.right, rcClient.bottom};
+    RECT rcCanvas = {0, top_bar_height, rcClient.right, rcClient.bottom};
     HBRUSH hBrCanvas = CreateSolidBrush(RGB(255, 255, 255));
     FillRect(hdc, &rcCanvas, hBrCanvas);
     DeleteObject(hBrCanvas);
 
-    /* Graph Plot Area Background */
     HBRUSH hBrPlot = CreateSolidBrush(RGB(252, 253, 255));
     FillRect(hdc, &rcGraph, hBrPlot);
     DeleteObject(hBrPlot);
 
-    /* Graph Border */
     HPEN hPenBorder = CreatePen(PS_SOLID, 1, RGB(200, 208, 218));
-    SelectObject(hdc, hPenBorder);
+    HPEN hOldPen = (HPEN)SelectObject(hdc, hPenBorder);
     Rectangle(hdc, rcGraph.left, rcGraph.top, rcGraph.right, rcGraph.bottom);
-    DeleteObject(hPenBorder);
 
     /* 2. Title */
     HFONT hOldFont = (HFONT)SelectObject(hdc, g_app.hFontTitle);
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, RGB(25, 35, 55));
-    RECT rcTitle = {rcGraph.left, top_bar_height + 8, rcGraph.right, rcGraph.top};
+    RECT rcTitle = {rcGraph.left, for_export ? 15 : (top_bar_height + 8), rcGraph.right, rcGraph.top - 8};
     DrawTextA(hdc, g_app.title_str, -1, &rcTitle, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 
     /* 3. Grid Lines & Ticks */
@@ -643,12 +646,10 @@ static void draw_graph(HDC hdc, RECT rcClient) {
             MoveToEx(hdc, sx, rcGraph.top, NULL);
             LineTo(hdc, sx, rcGraph.bottom);
 
-            /* Tick mark */
             SelectObject(hdc, hPenAxis);
             MoveToEx(hdc, sx, rcGraph.bottom, NULL);
             LineTo(hdc, sx, rcGraph.bottom + 5);
 
-            /* Tick label */
             char lbl[32];
             format_tick_label(lbl, sizeof(lbl), x, x_step);
             RECT rcLabel = {sx - 40, rcGraph.bottom + 7, sx + 40, rcGraph.bottom + 24};
@@ -665,12 +666,10 @@ static void draw_graph(HDC hdc, RECT rcClient) {
             MoveToEx(hdc, rcGraph.left, sy, NULL);
             LineTo(hdc, rcGraph.right, sy);
 
-            /* Tick mark */
             SelectObject(hdc, hPenAxis);
             MoveToEx(hdc, rcGraph.left - 5, sy, NULL);
             LineTo(hdc, rcGraph.left, sy);
 
-            /* Tick label */
             char lbl[32];
             format_tick_label(lbl, sizeof(lbl), y, y_step);
             RECT rcLabel = {rcGraph.left - 80, sy - 8, rcGraph.left - 8, sy + 8};
@@ -697,7 +696,7 @@ static void draw_graph(HDC hdc, RECT rcClient) {
     SelectClipRgn(hdc, hRgnClip);
 
     if (g_app.ast) {
-        HPEN hPenCurve = CreatePen(PS_SOLID, 2, RGB(28, 100, 242)); // Vibrant blue
+        HPEN hPenCurve = CreatePen(PS_SOLID, 2, RGB(28, 100, 242));
         SelectObject(hdc, hPenCurve);
 
         bool has_prev = false;
@@ -713,7 +712,6 @@ static void draw_graph(HDC hdc, RECT rcClient) {
             if (!isnan(my) && !isinf(my)) {
                 int sy = to_screen_y(my, rcGraph);
 
-                /* Detect asymptote / jump discontinuity (e.g. tan(x), 1/x) */
                 bool jump = false;
                 if (has_prev) {
                     if (abs(sy - prev_sy) > (rcGraph.bottom - rcGraph.top) * 2) {
@@ -745,65 +743,535 @@ static void draw_graph(HDC hdc, RECT rcClient) {
     SelectObject(hdc, g_app.hFontLabel);
     SetTextColor(hdc, RGB(40, 50, 70));
 
-    /* X Axis Label (bottom center) */
-    RECT rcXLabel = {rcGraph.left, rcGraph.bottom + 25, rcGraph.right, rcClient.bottom - bottom_bar_height};
+    /* X Axis Label */
+    RECT rcXLabel = {rcGraph.left, rcGraph.bottom + 25, rcGraph.right, rcGraph.bottom + 50};
     DrawTextA(hdc, g_app.xlabel_str, -1, &rcXLabel, DT_CENTER | DT_SINGLELINE);
 
-    /* Y Axis Label (vertical on the left) */
+    /* Y Axis Label */
     SelectObject(hdc, g_app.hFontYAxis);
     int y_center = (rcGraph.top + rcGraph.bottom) / 2;
     SIZE sz;
     GetTextExtentPoint32A(hdc, g_app.ylabel_str, (int)strlen(g_app.ylabel_str), &sz);
-    TextOutA(hdc, 20, y_center + sz.cx / 2, g_app.ylabel_str, (int)strlen(g_app.ylabel_str));
+    TextOutA(hdc, for_export ? 25 : 20, y_center + sz.cx / 2, g_app.ylabel_str, (int)strlen(g_app.ylabel_str));
 
-    /* 6. Error or Status Message */
+    /* 6. Status/Error on UI */
     SelectObject(hdc, g_app.hFontUI);
     if (g_app.error_str[0]) {
-        SetTextColor(hdc, RGB(220, 38, 38)); // Red
+        SetTextColor(hdc, RGB(220, 38, 38));
         char err_disp[200];
         snprintf(err_disp, sizeof(err_disp), "Expression Error: %s", g_app.error_str);
         RECT rcErr = {rcGraph.left + 10, rcGraph.top + 10, rcGraph.right - 10, rcGraph.top + 35};
         DrawTextA(hdc, err_disp, -1, &rcErr, DT_LEFT | DT_SINGLELINE);
     }
 
-    /* 7. Bottom Navigation & Coordinate Bar */
-    RECT rcBottomBar = {0, rcClient.bottom - bottom_bar_height, rcClient.right, rcClient.bottom};
-    HBRUSH hBrBottom = CreateSolidBrush(RGB(248, 250, 252));
-    FillRect(hdc, &rcBottomBar, hBrBottom);
-    DeleteObject(hBrBottom);
+    /* 7. Bottom Navigation & Readout */
+    if (!for_export) {
+        RECT rcBottomBar = {0, rcClient.bottom - bottom_bar_height, rcClient.right, rcClient.bottom};
+        HBRUSH hBrBottom = CreateSolidBrush(RGB(248, 250, 252));
+        FillRect(hdc, &rcBottomBar, hBrBottom);
+        DeleteObject(hBrBottom);
 
-    SelectObject(hdc, hPenSep);
-    MoveToEx(hdc, 0, rcBottomBar.top, NULL);
-    LineTo(hdc, rcClient.right, rcBottomBar.top);
+        HPEN hPenSep = CreatePen(PS_SOLID, 1, RGB(218, 222, 229));
+        SelectObject(hdc, hPenSep);
+        MoveToEx(hdc, 0, rcBottomBar.top, NULL);
+        LineTo(hdc, rcClient.right, rcBottomBar.top);
+        DeleteObject(hPenSep);
 
-    SetTextColor(hdc, RGB(110, 120, 135));
-    RECT rcHelp = {15, rcBottomBar.top, rcClient.right - 300, rcBottomBar.bottom};
-    DrawTextA(hdc, "Tips: Drag to Pan  |  Scroll: Zoom Both  |  Shift+Scroll: Zoom X  |  Ctrl+Scroll: Zoom Y", 
-              -1, &rcHelp, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        SetTextColor(hdc, RGB(110, 120, 135));
+        RECT rcHelp = {15, rcBottomBar.top, rcClient.right - 300, rcBottomBar.bottom};
+        DrawTextA(hdc, "Tips: Drag to Pan | Scroll: Zoom Both | Shift+Scroll: Zoom X | Ctrl+Scroll: Zoom Y | Ctrl+S: Excel", 
+                  -1, &rcHelp, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
-    /* Mouse Coordinate Readout */
-    if (g_app.mouse_in_graph) {
-        double mx = to_math_x(g_app.cur_mouse_pt.x, rcGraph);
-        double my = to_math_y(g_app.cur_mouse_pt.y, rcGraph);
-        char coord_buf[128];
-        snprintf(coord_buf, sizeof(coord_buf), "X: %+.4f   Y: %+.4f", mx, my);
-        SetTextColor(hdc, RGB(30, 41, 59));
-        RECT rcCoord = {rcClient.right - 280, rcBottomBar.top, rcClient.right - 15, rcBottomBar.bottom};
-        DrawTextA(hdc, coord_buf, -1, &rcCoord, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+        if (g_app.mouse_in_graph) {
+            double mx = to_math_x(g_app.cur_mouse_pt.x, rcGraph);
+            double my = to_math_y(g_app.cur_mouse_pt.y, rcGraph);
+            char coord_buf[128];
+            snprintf(coord_buf, sizeof(coord_buf), "X: %+.4f   Y: %+.4f", mx, my);
+            SetTextColor(hdc, RGB(30, 41, 59));
+            RECT rcCoord = {rcClient.right - 280, rcBottomBar.top, rcClient.right - 15, rcBottomBar.bottom};
+            DrawTextA(hdc, coord_buf, -1, &rcCoord, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+        } else {
+            char range_buf[128];
+            snprintf(range_buf, sizeof(range_buf), "X: [%.2f, %.2f]  Y: [%.2f, %.2f]", g_app.x_min, g_app.x_max, g_app.y_min, g_app.y_max);
+            SetTextColor(hdc, RGB(100, 116, 139));
+            RECT rcCoord = {rcClient.right - 320, rcBottomBar.top, rcClient.right - 15, rcBottomBar.bottom};
+            DrawTextA(hdc, range_buf, -1, &rcCoord, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+        }
     } else {
-        char range_buf[128];
-        snprintf(range_buf, sizeof(range_buf), "X: [%.2f, %.2f]  Y: [%.2f, %.2f]", g_app.x_min, g_app.x_max, g_app.y_min, g_app.y_max);
-        SetTextColor(hdc, RGB(100, 116, 139));
-        RECT rcCoord = {rcClient.right - 320, rcBottomBar.top, rcClient.right - 15, rcBottomBar.bottom};
-        DrawTextA(hdc, range_buf, -1, &rcCoord, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+        SetTextColor(hdc, RGB(140, 150, 165));
+        SelectObject(hdc, g_app.hFontTick);
+        char note[512];
+        snprintf(note, sizeof(note), "f(x) = %s  |  X: [%.3f, %.3f]  Y: [%.3f, %.3f]",
+                 g_app.func_str, g_app.x_min, g_app.x_max, g_app.y_min, g_app.y_max);
+        RECT rcNote = {rcGraph.left, rcClient.bottom - 22, rcGraph.right, rcClient.bottom - 4};
+        DrawTextA(hdc, note, -1, &rcNote, DT_RIGHT | DT_SINGLELINE);
     }
 
     /* Cleanup DC selections */
     SelectObject(hdc, hOldPen);
     SelectObject(hdc, hOldFont);
-    DeleteObject(hPenSep);
+    DeleteObject(hPenBorder);
     DeleteObject(hPenGrid);
     DeleteObject(hPenAxis);
+}
+
+/* -------------------------------------------------------------
+ * PNG & ZIP Generation for Excel Export
+ * ------------------------------------------------------------- */
+static uint32_t crc_table[256];
+static int crc_ready = 0;
+
+static void init_crc(void) {
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t c = i;
+        for (int j = 0; j < 8; j++) {
+            c = (c & 1) ? (0xEDB88320L ^ (c >> 1)) : (c >> 1);
+        }
+        crc_table[i] = c;
+    }
+    crc_ready = 1;
+}
+
+static uint32_t update_crc(uint32_t crc, const uint8_t *buf, size_t len) {
+    uint32_t c = crc ^ 0xFFFFFFFFL;
+    if (!crc_ready) init_crc();
+    for (size_t n = 0; n < len; n++) {
+        c = crc_table[(c ^ buf[n]) & 0xFF] ^ (c >> 8);
+    }
+    return c ^ 0xFFFFFFFFL;
+}
+
+static uint32_t update_adler32(uint32_t adler, const uint8_t *buf, size_t len) {
+    uint32_t s1 = adler & 0xFFFF;
+    uint32_t s2 = (adler >> 16) & 0xFFFF;
+    for (size_t n = 0; n < len; n++) {
+        s1 = (s1 + buf[n]) % 65521;
+        s2 = (s2 + s1) % 65521;
+    }
+    return (s2 << 16) | s1;
+}
+
+#define WRITE_U32_BE(ptr, val) do { \
+    (ptr)[0] = (uint8_t)((val) >> 24); \
+    (ptr)[1] = (uint8_t)((val) >> 16); \
+    (ptr)[2] = (uint8_t)((val) >> 8);  \
+    (ptr)[3] = (uint8_t)((val));       \
+} while(0)
+
+static uint8_t* create_png_rgb24(const uint8_t* rgb, int w, int h, size_t* out_size) {
+    size_t line_len = 1 + (size_t)w * 3;
+    size_t raw_size = line_len * (size_t)h;
+    uint8_t* raw = (uint8_t*)malloc(raw_size);
+    if (!raw) return NULL;
+    for (int y = 0; y < h; y++) {
+        raw[y * line_len] = 0;
+        memcpy(&raw[y * line_len + 1], &rgb[y * w * 3], (size_t)w * 3);
+    }
+
+    uint32_t adler = update_adler32(1, raw, raw_size);
+    size_t num_blocks = (raw_size + 65534) / 65535;
+    if (num_blocks == 0) num_blocks = 1;
+    size_t idat_data_size = 2 + num_blocks * 5 + raw_size + 4;
+    size_t total_png = 8 + (8 + 13 + 4) + (8 + idat_data_size + 4) + (8 + 0 + 4);
+
+    uint8_t* png = (uint8_t*)malloc(total_png);
+    if (!png) { free(raw); return NULL; }
+
+    uint8_t* p = png;
+    const uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    memcpy(p, sig, 8); p += 8;
+
+    /* IHDR */
+    WRITE_U32_BE(p, 13); p += 4;
+    uint8_t* ihdr_start = p;
+    memcpy(p, "IHDR", 4); p += 4;
+    WRITE_U32_BE(p, (uint32_t)w); p += 4;
+    WRITE_U32_BE(p, (uint32_t)h); p += 4;
+    *p++ = 8; *p++ = 2; *p++ = 0; *p++ = 0; *p++ = 0;
+    uint32_t ihdr_crc = update_crc(0, ihdr_start, 17);
+    WRITE_U32_BE(p, ihdr_crc); p += 4;
+
+    /* IDAT */
+    WRITE_U32_BE(p, (uint32_t)idat_data_size); p += 4;
+    uint8_t* idat_start = p;
+    memcpy(p, "IDAT", 4); p += 4;
+    *p++ = 0x78; *p++ = 0x01;
+    size_t offset = 0;
+    while (offset < raw_size) {
+        size_t chunk = raw_size - offset;
+        if (chunk > 65535) chunk = 65535;
+        uint8_t is_last = (offset + chunk >= raw_size) ? 1 : 0;
+        *p++ = is_last;
+        *p++ = (uint8_t)(chunk & 0xFF);
+        *p++ = (uint8_t)((chunk >> 8) & 0xFF);
+        *p++ = (uint8_t)((~chunk) & 0xFF);
+        *p++ = (uint8_t)(((~chunk) >> 8) & 0xFF);
+        memcpy(p, &raw[offset], chunk);
+        p += chunk;
+        offset += chunk;
+    }
+    WRITE_U32_BE(p, adler); p += 4;
+    uint32_t idat_crc = update_crc(0, idat_start, 4 + idat_data_size);
+    WRITE_U32_BE(p, idat_crc); p += 4;
+
+    /* IEND */
+    WRITE_U32_BE(p, 0); p += 4;
+    uint8_t* iend_start = p;
+    memcpy(p, "IEND", 4); p += 4;
+    uint32_t iend_crc = update_crc(0, iend_start, 4);
+    WRITE_U32_BE(p, iend_crc); p += 4;
+
+    free(raw);
+    *out_size = (size_t)(p - png);
+    return png;
+}
+
+static uint8_t* render_plot_to_png(int w, int h, size_t* out_png_size) {
+    HDC screenDC = GetDC(NULL);
+    HDC memDC = CreateCompatibleDC(screenDC);
+
+    BITMAPINFO bmi;
+    memset(&bmi, 0, sizeof(bmi));
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = -h; // Top-down
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 24;
+    bmi.bmiHeader.biCompression = BI_RGB;
+
+    void* pBits = NULL;
+    HBITMAP hbm = CreateDIBSection(memDC, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
+    if (!hbm || !pBits) {
+        if (hbm) DeleteObject(hbm);
+        DeleteDC(memDC);
+        ReleaseDC(NULL, screenDC);
+        return NULL;
+    }
+
+    HBITMAP oldBM = (HBITMAP)SelectObject(memDC, hbm);
+
+    RECT rc = {0, 0, w, h};
+    draw_graph(memDC, rc, true);
+
+    GdiFlush();
+
+    size_t row_stride = ((size_t)w * 3 + 3) & ~3;
+    uint8_t* rgb = (uint8_t*)malloc((size_t)w * h * 3);
+    if (!rgb) {
+        SelectObject(memDC, oldBM);
+        DeleteObject(hbm);
+        DeleteDC(memDC);
+        ReleaseDC(NULL, screenDC);
+        return NULL;
+    }
+
+    const uint8_t* src = (const uint8_t*)pBits;
+    for (int y = 0; y < h; y++) {
+        const uint8_t* src_row = src + y * row_stride;
+        uint8_t* dst_row = rgb + (size_t)y * w * 3;
+        for (int x = 0; x < w; x++) {
+            dst_row[x * 3 + 0] = src_row[x * 3 + 2]; // R
+            dst_row[x * 3 + 1] = src_row[x * 3 + 1]; // G
+            dst_row[x * 3 + 2] = src_row[x * 3 + 0]; // B
+        }
+    }
+
+    SelectObject(memDC, oldBM);
+    DeleteObject(hbm);
+    DeleteDC(memDC);
+    ReleaseDC(NULL, screenDC);
+
+    uint8_t* png = create_png_rgb24(rgb, w, h, out_png_size);
+    free(rgb);
+    return png;
+}
+
+/* In-Memory ZIP Writer */
+typedef struct {
+    char name[128];
+    uint32_t crc;
+    uint32_t size;
+    uint32_t offset;
+    void* data;
+} ZipEntry;
+
+typedef struct {
+    ZipEntry entries[32];
+    int count;
+} ZipWriter;
+
+static void zip_add(ZipWriter* zw, const char* name, const void* data, size_t size) {
+    if (zw->count >= 32) return;
+    ZipEntry* e = &zw->entries[zw->count++];
+    strncpy(e->name, name, sizeof(e->name) - 1);
+    e->size = (uint32_t)size;
+    e->crc = update_crc(0, (const uint8_t*)data, size);
+    e->data = malloc(size);
+    if (e->data) memcpy(e->data, data, size);
+}
+
+static int zip_write_file(ZipWriter* zw, const char* filename) {
+    FILE* fp = fopen(filename, "wb");
+    if (!fp) return 0;
+
+    for (int i = 0; i < zw->count; i++) {
+        ZipEntry* e = &zw->entries[i];
+        e->offset = (uint32_t)ftell(fp);
+        uint16_t name_len = (uint16_t)strlen(e->name);
+
+        uint8_t lfh[30];
+        memset(lfh, 0, sizeof(lfh));
+        lfh[0] = 0x50; lfh[1] = 0x4B; lfh[2] = 0x03; lfh[3] = 0x04;
+        lfh[4] = 20;
+        memcpy(&lfh[14], &e->crc, 4);
+        memcpy(&lfh[18], &e->size, 4);
+        memcpy(&lfh[22], &e->size, 4);
+        memcpy(&lfh[26], &name_len, 2);
+
+        fwrite(lfh, 1, 30, fp);
+        fwrite(e->name, 1, name_len, fp);
+        if (e->size > 0 && e->data) fwrite(e->data, 1, e->size, fp);
+    }
+
+    uint32_t cd_offset = (uint32_t)ftell(fp);
+    for (int i = 0; i < zw->count; i++) {
+        ZipEntry* e = &zw->entries[i];
+        uint16_t name_len = (uint16_t)strlen(e->name);
+
+        uint8_t cdh[46];
+        memset(cdh, 0, sizeof(cdh));
+        cdh[0] = 0x50; cdh[1] = 0x4B; cdh[2] = 0x01; cdh[3] = 0x02;
+        cdh[4] = 20; cdh[6] = 20;
+        memcpy(&cdh[16], &e->crc, 4);
+        memcpy(&cdh[20], &e->size, 4);
+        memcpy(&cdh[24], &e->size, 4);
+        memcpy(&cdh[28], &name_len, 2);
+        memcpy(&cdh[42], &e->offset, 4);
+
+        fwrite(cdh, 1, 46, fp);
+        fwrite(e->name, 1, name_len, fp);
+    }
+
+    uint32_t cd_size = (uint32_t)ftell(fp) - cd_offset;
+    uint8_t eocd[22];
+    memset(eocd, 0, sizeof(eocd));
+    eocd[0] = 0x50; eocd[1] = 0x4B; eocd[2] = 0x05; eocd[3] = 0x06;
+    uint16_t total_entries = (uint16_t)zw->count;
+    memcpy(&eocd[8], &total_entries, 2);
+    memcpy(&eocd[10], &total_entries, 2);
+    memcpy(&eocd[12], &cd_size, 4);
+    memcpy(&eocd[16], &cd_offset, 4);
+
+    fwrite(eocd, 1, 22, fp);
+    fclose(fp);
+
+    for (int i = 0; i < zw->count; i++) {
+        if (zw->entries[i].data) free(zw->entries[i].data);
+    }
+    return 1;
+}
+
+/* Dynamic string buffer for sheet XML */
+typedef struct {
+    char* data;
+    size_t len;
+    size_t cap;
+} StrBuf;
+
+static void sb_init(StrBuf* sb) {
+    sb->cap = 16384;
+    sb->len = 0;
+    sb->data = (char*)malloc(sb->cap);
+    if (sb->data) sb->data[0] = '\0';
+}
+
+static void sb_append(StrBuf* sb, const char* str) {
+    size_t slen = strlen(str);
+    if (sb->len + slen + 1 > sb->cap) {
+        while (sb->len + slen + 1 > sb->cap) sb->cap *= 2;
+        sb->data = (char*)realloc(sb->data, sb->cap);
+    }
+    memcpy(sb->data + sb->len, str, slen + 1);
+    sb->len += slen;
+}
+
+static void sb_printf(StrBuf* sb, const char* fmt, ...) {
+    char buf[512];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    sb_append(sb, buf);
+}
+
+static void xml_escape(const char* in, char* out, size_t out_sz) {
+    size_t j = 0;
+    for (size_t i = 0; in[i] && j + 6 < out_sz; i++) {
+        if (in[i] == '&') { strcpy(&out[j], "&amp;"); j += 5; }
+        else if (in[i] == '<') { strcpy(&out[j], "&lt;"); j += 4; }
+        else if (in[i] == '>') { strcpy(&out[j], "&gt;"); j += 4; }
+        else if (in[i] == '"') { strcpy(&out[j], "&quot;"); j += 6; }
+        else if (in[i] == '\'') { strcpy(&out[j], "&apos;"); j += 6; }
+        else { out[j++] = in[i]; }
+    }
+    out[j] = '\0';
+}
+
+static bool export_to_excel(HWND hwnd, const char* filepath) {
+    /* 1. Render Graph to PNG */
+    size_t png_size = 0;
+    uint8_t* png_data = render_plot_to_png(1000, 600, &png_size);
+    if (!png_data || png_size == 0) {
+        MessageBoxA(hwnd, "Kunne ikke generere bilde av grafen.", "Eksportfeil", MB_ICONERROR);
+        return false;
+    }
+
+    /* 2. Build OpenXML Worksheet XML */
+    StrBuf sb;
+    sb_init(&sb);
+    sb_append(&sb, 
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n"
+        "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\r\n"
+        "  <cols>\r\n"
+        "    <col min=\"1\" max=\"1\" width=\"18\" customWidth=\"1\"/>\r\n"
+        "    <col min=\"2\" max=\"2\" width=\"20\" customWidth=\"1\"/>\r\n"
+        "  </cols>\r\n"
+        "  <sheetData>\r\n");
+
+    char esc_title[256], esc_func[256], esc_xlab[256], esc_ylab[256];
+    xml_escape(g_app.title_str, esc_title, sizeof(esc_title));
+    xml_escape(g_app.func_str, esc_func, sizeof(esc_func));
+    xml_escape(g_app.xlabel_str, esc_xlab, sizeof(esc_xlab));
+    xml_escape(g_app.ylabel_str, esc_ylab, sizeof(esc_ylab));
+
+    sb_printf(&sb, "    <row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Graf-tittel:</t></is></c><c r=\"B1\" t=\"inlineStr\"><is><t>%s</t></is></c></row>\r\n", esc_title);
+    sb_printf(&sb, "    <row r=\"2\"><c r=\"A2\" t=\"inlineStr\"><is><t>Funksjon f(x):</t></is></c><c r=\"B2\" t=\"inlineStr\"><is><t>%s</t></is></c></row>\r\n", esc_func);
+    sb_printf(&sb, "    <row r=\"3\"><c r=\"A3\" t=\"inlineStr\"><is><t>X-omr&#229;de:</t></is></c><c r=\"B3\" t=\"inlineStr\"><is><t>[%.4f, %.4f]</t></is></c></row>\r\n", g_app.x_min, g_app.x_max);
+    sb_printf(&sb, "    <row r=\"4\"><c r=\"A4\" t=\"inlineStr\"><is><t>Y-omr&#229;de:</t></is></c><c r=\"B4\" t=\"inlineStr\"><is><t>[%.4f, %.4f]</t></is></c></row>\r\n", g_app.y_min, g_app.y_max);
+    sb_printf(&sb, "    <row r=\"6\"><c r=\"A6\" t=\"inlineStr\"><is><t>%s (x)</t></is></c><c r=\"B6\" t=\"inlineStr\"><is><t>%s (f(x))</t></is></c></row>\r\n", esc_xlab, esc_ylab);
+
+    int n_points = 1000;
+    double dx = (g_app.x_max - g_app.x_min) / (n_points - 1);
+    for (int i = 0; i < n_points; i++) {
+        double mx = g_app.x_min + i * dx;
+        double my = eval_ast(g_app.ast, mx);
+        int row_idx = 7 + i;
+
+        if (isnan(my) || isinf(my)) {
+            sb_printf(&sb, "    <row r=\"%d\"><c r=\"A%d\"><v>%.6g</v></c><c r=\"B%d\" t=\"inlineStr\"><is><t>Udefinert</t></is></c></row>\r\n",
+                      row_idx, row_idx, mx, row_idx);
+        } else {
+            sb_printf(&sb, "    <row r=\"%d\"><c r=\"A%d\"><v>%.6g</v></c><c r=\"B%d\"><v>%.6g</v></c></row>\r\n",
+                      row_idx, row_idx, mx, row_idx, my);
+        }
+    }
+
+    sb_append(&sb, "  </sheetData>\r\n  <drawing r:id=\"rId1\"/>\r\n</worksheet>\r\n");
+
+    /* 3. Static OpenXML parts */
+    const char* content_types = 
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n"
+        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\r\n"
+        "  <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\r\n"
+        "  <Default Extension=\"xml\" ContentType=\"application/xml\"/>\r\n"
+        "  <Default Extension=\"png\" ContentType=\"image/png\"/>\r\n"
+        "  <Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>\r\n"
+        "  <Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>\r\n"
+        "  <Override PartName=\"/xl/drawings/drawing1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.drawing+xml\"/>\r\n"
+        "</Types>";
+
+    const char* root_rels =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\r\n"
+        "  <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>\r\n"
+        "</Relationships>";
+
+    const char* wb_rels =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\r\n"
+        "  <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>\r\n"
+        "</Relationships>";
+
+    const char* workbook =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n"
+        "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\r\n"
+        "  <sheets>\r\n"
+        "    <sheet name=\"Funksjonsdata\" sheetId=\"1\" r:id=\"rId1\"/>\r\n"
+        "  </sheets>\r\n"
+        "</workbook>";
+
+    const char* sheet_rels =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\r\n"
+        "  <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing\" Target=\"../drawings/drawing1.xml\"/>\r\n"
+        "</Relationships>";
+
+    const char* drawing_rels =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\r\n"
+        "  <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/image1.png\"/>\r\n"
+        "</Relationships>";
+
+    const char* drawing =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n"
+        "<xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\r\n"
+        "  <xdr:twoCellAnchor editAs=\"oneCell\">\r\n"
+        "    <xdr:from><xdr:col>3</xdr:col><xdr:colOff>120000</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>80000</xdr:rowOff></xdr:from>\r\n"
+        "    <xdr:to><xdr:col>15</xdr:col><xdr:colOff>300000</xdr:colOff><xdr:row>27</xdr:row><xdr:rowOff>80000</xdr:rowOff></xdr:to>\r\n"
+        "    <xdr:pic>\r\n"
+        "      <xdr:nvPicPr>\r\n"
+        "        <xdr:cNvPr id=\"2\" name=\"Funksjonsgraf\"/>\r\n"
+        "        <xdr:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></xdr:cNvPicPr>\r\n"
+        "      </xdr:nvPicPr>\r\n"
+        "      <xdr:blipFill>\r\n"
+        "        <a:blip r:embed=\"rId1\"/>\r\n"
+        "        <a:stretch><a:fillRect/></a:stretch>\r\n"
+        "      </xdr:blipFill>\r\n"
+        "      <xdr:spPr>\r\n"
+        "        <a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>\r\n"
+        "      </xdr:spPr>\r\n"
+        "    </xdr:pic>\r\n"
+        "    <xdr:clientData/>\r\n"
+        "  </xdr:twoCellAnchor>\r\n"
+        "</xdr:wsDr>";
+
+    /* 4. Pack into ZIP (.xlsx) */
+    ZipWriter zw;
+    memset(&zw, 0, sizeof(zw));
+
+    zip_add(&zw, "[Content_Types].xml", content_types, strlen(content_types));
+    zip_add(&zw, "_rels/.rels", root_rels, strlen(root_rels));
+    zip_add(&zw, "xl/_rels/workbook.xml.rels", wb_rels, strlen(wb_rels));
+    zip_add(&zw, "xl/workbook.xml", workbook, strlen(workbook));
+    zip_add(&zw, "xl/worksheets/_rels/sheet1.xml.rels", sheet_rels, strlen(sheet_rels));
+    zip_add(&zw, "xl/drawings/_rels/drawing1.xml.rels", drawing_rels, strlen(drawing_rels));
+    zip_add(&zw, "xl/drawings/drawing1.xml", drawing, strlen(drawing));
+    zip_add(&zw, "xl/worksheets/sheet1.xml", sb.data, sb.len);
+    zip_add(&zw, "xl/media/image1.png", png_data, png_size);
+
+    int ok = zip_write_file(&zw, filepath);
+
+    free(png_data);
+    free(sb.data);
+
+    if (ok) {
+        char msg[600];
+        snprintf(msg, sizeof(msg),
+            "Excel-filen ble vellykket lagret til:\n%s\n\n"
+            "Innhold:\n"
+            "  - 1000 datapunkter for x og f(x)\n"
+            "  - Tittel, formel og akseopplysninger\n"
+            "  - Innebygd bilde av funksjonsgrafen\n\n"
+            "Vil du åpne filen i Excel nå?", filepath);
+        if (MessageBoxA(hwnd, msg, "Eksport til Excel fullført", MB_YESNO | MB_ICONINFORMATION) == IDYES) {
+            ShellExecuteA(hwnd, "open", filepath, NULL, NULL, SW_SHOWNORMAL);
+        }
+        return true;
+    } else {
+        MessageBoxA(hwnd, "Feil under skriving av Excel-filen.", "Eksportfeil", MB_ICONERROR);
+        return false;
+    }
 }
 
 /* -------------------------------------------------------------
@@ -822,18 +1290,18 @@ static void create_ui_controls(HWND hwnd) {
     CreateWindowA("STATIC", "f(x) =", WS_CHILD | WS_VISIBLE, 12, 12, 38, 22, hwnd, NULL, hInst, NULL);
     g_app.hEditFunc = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", g_app.func_str, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 52, 10, 190, 24, hwnd, (HMENU)ID_EDIT_FUNC, hInst, NULL);
 
-    CreateWindowA("STATIC", "Title:", WS_CHILD | WS_VISIBLE, 252, 12, 38, 22, hwnd, NULL, hInst, NULL);
+    CreateWindowA("STATIC", "Tittel:", WS_CHILD | WS_VISIBLE, 252, 12, 38, 22, hwnd, NULL, hInst, NULL);
     g_app.hEditTitle = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", g_app.title_str, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 292, 10, 150, 24, hwnd, (HMENU)ID_EDIT_TITLE, hInst, NULL);
 
-    CreateWindowA("STATIC", "X-Axis:", WS_CHILD | WS_VISIBLE, 452, 12, 45, 22, hwnd, NULL, hInst, NULL);
-    g_app.hEditXLabel = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", g_app.xlabel_str, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 500, 10, 90, 24, hwnd, (HMENU)ID_EDIT_XLABEL, hInst, NULL);
+    CreateWindowA("STATIC", "X-Akse:", WS_CHILD | WS_VISIBLE, 452, 12, 48, 22, hwnd, NULL, hInst, NULL);
+    g_app.hEditXLabel = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", g_app.xlabel_str, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 502, 10, 90, 24, hwnd, (HMENU)ID_EDIT_XLABEL, hInst, NULL);
 
-    CreateWindowA("STATIC", "Y-Axis:", WS_CHILD | WS_VISIBLE, 600, 12, 45, 22, hwnd, NULL, hInst, NULL);
-    g_app.hEditYLabel = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", g_app.ylabel_str, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 648, 10, 90, 24, hwnd, (HMENU)ID_EDIT_YLABEL, hInst, NULL);
+    CreateWindowA("STATIC", "Y-Akse:", WS_CHILD | WS_VISIBLE, 602, 12, 48, 22, hwnd, NULL, hInst, NULL);
+    g_app.hEditYLabel = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", g_app.ylabel_str, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 652, 10, 90, 24, hwnd, (HMENU)ID_EDIT_YLABEL, hInst, NULL);
 
-    g_app.hBtnPlot = CreateWindowA("BUTTON", "Plot / Update", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 750, 9, 105, 26, hwnd, (HMENU)ID_BTN_PLOT, hInst, NULL);
+    g_app.hBtnPlot = CreateWindowA("BUTTON", "Tegn graf", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 755, 9, 95, 26, hwnd, (HMENU)ID_BTN_PLOT, hInst, NULL);
 
-    /* Row 2: Zoom Controls */
+    /* Row 2: Zoom Controls & Excel Export */
     CreateWindowA("STATIC", "Zoom:", WS_CHILD | WS_VISIBLE, 12, 48, 42, 22, hwnd, NULL, hInst, NULL);
     g_app.hBtnZoomXIn     = CreateWindowA("BUTTON", "X +", WS_CHILD | WS_VISIBLE, 56, 45, 48, 25, hwnd, (HMENU)ID_BTN_ZOOM_X_IN, hInst, NULL);
     g_app.hBtnZoomXOut    = CreateWindowA("BUTTON", "X -", WS_CHILD | WS_VISIBLE, 108, 45, 48, 25, hwnd, (HMENU)ID_BTN_ZOOM_X_OUT, hInst, NULL);
@@ -841,10 +1309,12 @@ static void create_ui_controls(HWND hwnd) {
     g_app.hBtnZoomYIn     = CreateWindowA("BUTTON", "Y +", WS_CHILD | WS_VISIBLE, 168, 45, 48, 25, hwnd, (HMENU)ID_BTN_ZOOM_Y_IN, hInst, NULL);
     g_app.hBtnZoomYOut    = CreateWindowA("BUTTON", "Y -", WS_CHILD | WS_VISIBLE, 220, 45, 48, 25, hwnd, (HMENU)ID_BTN_ZOOM_Y_OUT, hInst, NULL);
 
-    g_app.hBtnZoomBothIn  = CreateWindowA("BUTTON", "Both +", WS_CHILD | WS_VISIBLE, 280, 45, 62, 25, hwnd, (HMENU)ID_BTN_ZOOM_BOTH_IN, hInst, NULL);
-    g_app.hBtnZoomBothOut = CreateWindowA("BUTTON", "Both -", WS_CHILD | WS_VISIBLE, 346, 45, 62, 25, hwnd, (HMENU)ID_BTN_ZOOM_BOTH_OUT, hInst, NULL);
+    g_app.hBtnZoomBothIn  = CreateWindowA("BUTTON", "Begge +", WS_CHILD | WS_VISIBLE, 280, 45, 68, 25, hwnd, (HMENU)ID_BTN_ZOOM_BOTH_IN, hInst, NULL);
+    g_app.hBtnZoomBothOut = CreateWindowA("BUTTON", "Begge -", WS_CHILD | WS_VISIBLE, 352, 45, 68, 25, hwnd, (HMENU)ID_BTN_ZOOM_BOTH_OUT, hInst, NULL);
 
-    g_app.hBtnReset       = CreateWindowA("BUTTON", "Reset View", WS_CHILD | WS_VISIBLE, 420, 45, 85, 25, hwnd, (HMENU)ID_BTN_RESET, hInst, NULL);
+    g_app.hBtnReset       = CreateWindowA("BUTTON", "Nullstill visning", WS_CHILD | WS_VISIBLE, 430, 45, 105, 25, hwnd, (HMENU)ID_BTN_RESET, hInst, NULL);
+
+    g_app.hBtnExcel       = CreateWindowA("BUTTON", "Eksporter til Excel (.xlsx)", WS_CHILD | WS_VISIBLE, 550, 45, 185, 25, hwnd, (HMENU)ID_BTN_EXCEL, hInst, NULL);
 
     /* Subclass edit controls so pressing Enter automatically plots */
     g_oldEditProc = (WNDPROC)SetWindowLongPtr(g_app.hEditFunc, GWLP_WNDPROC, (LONG_PTR)EditSubclassProc);
@@ -852,11 +1322,11 @@ static void create_ui_controls(HWND hwnd) {
     SetWindowLongPtr(g_app.hEditXLabel, GWLP_WNDPROC, (LONG_PTR)EditSubclassProc);
     SetWindowLongPtr(g_app.hEditYLabel, GWLP_WNDPROC, (LONG_PTR)EditSubclassProc);
 
-    /* Set clean font for controls */
     HWND controls[] = {
         g_app.hEditFunc, g_app.hEditTitle, g_app.hEditXLabel, g_app.hEditYLabel,
         g_app.hBtnPlot, g_app.hBtnZoomXIn, g_app.hBtnZoomXOut, g_app.hBtnZoomYIn,
-        g_app.hBtnZoomYOut, g_app.hBtnZoomBothIn, g_app.hBtnZoomBothOut, g_app.hBtnReset
+        g_app.hBtnZoomYOut, g_app.hBtnZoomBothIn, g_app.hBtnZoomBothOut, g_app.hBtnReset,
+        g_app.hBtnExcel
     };
     for (size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); i++) {
         SendMessage(controls[i], WM_SETFONT, (WPARAM)g_app.hFontUI, TRUE);
@@ -922,6 +1392,23 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     reset_viewport();
                     InvalidateRect(hwnd, NULL, FALSE);
                     break;
+                case ID_BTN_EXCEL: {
+                    char szFile[MAX_PATH] = "funksjonsgraf.xlsx";
+                    OPENFILENAMEA ofn;
+                    memset(&ofn, 0, sizeof(ofn));
+                    ofn.lStructSize = sizeof(ofn);
+                    ofn.hwndOwner = hwnd;
+                    ofn.lpstrFilter = "Excel-arbeidsbok (*.xlsx)\0*.xlsx\0Alle filer (*.*)\0*.*\0";
+                    ofn.lpstrFile = szFile;
+                    ofn.nMaxFile = sizeof(szFile);
+                    ofn.lpstrDefExt = "xlsx";
+                    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+
+                    if (GetSaveFileNameA(&ofn)) {
+                        export_to_excel(hwnd, szFile);
+                    }
+                    break;
+                }
             }
             return 0;
         }
@@ -930,7 +1417,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             short delta = GET_WHEEL_DELTA_WPARAM(wParam);
             double factor = (delta > 0) ? 0.85 : (1.0 / 0.85);
 
-            /* Check modifier keys */
             bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             bool ctrl  = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
 
@@ -944,20 +1430,17 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
             RECT rcClient;
             GetClientRect(hwnd, &rcClient);
-            RECT gr = {85, 122, rcClient.right - 35, rcClient.bottom - 71};
+            RECT gr = {85, 122, rcClient.right - 40, rcClient.bottom - 71};
             if (pt.x >= gr.left && pt.x <= gr.right && pt.y >= gr.top && pt.y <= gr.bottom) {
                 cx = to_math_x(pt.x, gr);
                 cy = to_math_y(pt.y, gr);
             }
 
             if (shift) {
-                /* Zoom X-Axis only */
                 zoom_viewport(factor, 1.0, cx, cy);
             } else if (ctrl) {
-                /* Zoom Y-Axis only */
                 zoom_viewport(1.0, factor, cx, cy);
             } else {
-                /* Zoom Both */
                 zoom_viewport(factor, factor, cx, cy);
             }
             InvalidateRect(hwnd, NULL, FALSE);
@@ -968,7 +1451,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             RECT rcClient;
             GetClientRect(hwnd, &rcClient);
-            RECT gr = {85, 122, rcClient.right - 35, rcClient.bottom - 71};
+            RECT gr = {85, 122, rcClient.right - 40, rcClient.bottom - 71};
 
             if (pt.x >= gr.left && pt.x <= gr.right && pt.y >= gr.top && pt.y <= gr.bottom) {
                 g_app.is_dragging = true;
@@ -982,7 +1465,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             RECT rcClient;
             GetClientRect(hwnd, &rcClient);
-            RECT gr = {85, 122, rcClient.right - 35, rcClient.bottom - 71};
+            RECT gr = {85, 122, rcClient.right - 40, rcClient.bottom - 71};
 
             g_app.cur_mouse_pt = pt;
             g_app.mouse_in_graph = (pt.x >= gr.left && pt.x <= gr.right && pt.y >= gr.top && pt.y <= gr.bottom);
@@ -1005,7 +1488,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 g_app.last_mouse_pt = pt;
             }
 
-            /* Redraw to update coordinates or pan view */
             InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
@@ -1019,6 +1501,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         case WM_KEYDOWN: {
+            if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'S') {
+                SendMessage(hwnd, WM_COMMAND, MAKEWPARAM(ID_BTN_EXCEL, BN_CLICKED), (LPARAM)g_app.hBtnExcel);
+                return 0;
+            }
+
             switch (wParam) {
                 case 'R':
                     reset_viewport();
@@ -1086,12 +1573,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             RECT rcClient;
             GetClientRect(hwnd, &rcClient);
 
-            /* Double-buffering for flicker-free display */
             HDC memDC = CreateCompatibleDC(hdc);
             HBITMAP memBM = CreateCompatibleBitmap(hdc, rcClient.right, rcClient.bottom);
             HBITMAP oldBM = (HBITMAP)SelectObject(memDC, memBM);
 
-            draw_graph(memDC, rcClient);
+            draw_graph(memDC, rcClient, false);
 
             BitBlt(hdc, 0, 0, rcClient.right, rcClient.bottom, memDC, 0, 0, SRCCOPY);
 
@@ -1103,7 +1589,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         case WM_ERASEBKGND:
-            return 1; /* Handled in double buffer */
+            return 1;
 
         case WM_DESTROY:
             if (g_app.ast) free_node(g_app.ast);
@@ -1125,7 +1611,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     (void)hPrevInstance;
     (void)lpCmdLine;
 
-    /* Initialize default state */
     memset(&g_app, 0, sizeof(g_app));
     g_app.x_min = -10.0;
     g_app.x_max =  10.0;
@@ -1134,10 +1619,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     strncpy(g_app.func_str, "sin(x) * x / 2", sizeof(g_app.func_str) - 1);
     strncpy(g_app.title_str, "f(x) = sin(x) * x / 2", sizeof(g_app.title_str) - 1);
-    strncpy(g_app.xlabel_str, "Time / Position (x)", sizeof(g_app.xlabel_str) - 1);
+    strncpy(g_app.xlabel_str, "Tid / Posisjon (x)", sizeof(g_app.xlabel_str) - 1);
     strncpy(g_app.ylabel_str, "Amplitude f(x)", sizeof(g_app.ylabel_str) - 1);
 
-    /* Register Window Class */
     WNDCLASSEXA wc;
     memset(&wc, 0, sizeof(wc));
     wc.cbSize        = sizeof(WNDCLASSEXA);
@@ -1149,29 +1633,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.lpszClassName = "CFunctionPlotterWnd";
 
     if (!RegisterClassExA(&wc)) {
-        MessageBoxA(NULL, "Failed to register window class.", "Error", MB_ICONERROR);
+        MessageBoxA(NULL, "Kunne ikke registrere vindusklasse.", "Feil", MB_ICONERROR);
         return 1;
     }
 
-    /* Create Main Window */
     HWND hwnd = CreateWindowExA(
         0,
         "CFunctionPlotterWnd",
-        "C Interactive Function Plotter - f(x)",
+        "C Interaktiv Funksjonsplotter - f(x)",
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 980, 680,
+        CW_USEDEFAULT, CW_USEDEFAULT, 1020, 700,
         NULL, NULL, hInstance, NULL
     );
 
     if (!hwnd) {
-        MessageBoxA(NULL, "Failed to create main window.", "Error", MB_ICONERROR);
+        MessageBoxA(NULL, "Kunne ikke opprette hovedvindu.", "Feil", MB_ICONERROR);
         return 1;
     }
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
 
-    /* Message Loop */
     MSG msg;
     while (GetMessageA(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
@@ -1180,4 +1662,3 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
     return (int)msg.wParam;
 }
-

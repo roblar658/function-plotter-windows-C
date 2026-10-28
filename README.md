@@ -1,43 +1,47 @@
-# C Interactive Function Plotter
+# C Interactive Function Plotter & Excel Exporter
 
-A lightweight, standalone desktop function plotting application written in pure C for Windows (Win32 API & GDI). Zero external dependencies required.
+Et lettvekts, frittstående Windows-program skrevet i ren C (Win32 API & GDI) for interaktiv plotting og analyse av matematiske funksjoner. Ingen eksterne biblioteker kreves.
 
 <img width="1441" height="996" alt="image" src="https://github.com/user-attachments/assets/e715640e-64e5-4b1a-bf17-46bde94a5799" />
 
-## Features
+## Funksjoner
 
-- **Custom Expression Input ($f(x)$)**:
-  - Built-in recursive-descent math parser and evaluator with operator precedence and implicit multiplication (e.g. `2x`, `3sin(x)`).
-  - Supports operators: `+`, `-`, `*`, `/`, `^` (power).
-  - Supports functions: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `sqrt`, `cbrt`, `exp`, `ln`, `log10`, `abs`, `floor`, `ceil`.
-  - Supports constants: `pi`, `e`.
-- **Zooming Possibilities**:
-  - **Zoom X-axis only**: UI buttons `[X +]` / `[X -]`, keyboard `X` / `Shift+X`, or `Shift + Mouse Wheel`.
-  - **Zoom Y-axis only**: UI buttons `[Y +]` / `[Y -]`, keyboard `Y` / `Shift+Y`, or `Ctrl + Mouse Wheel`.
-  - **Zoom Both at the same time**: UI buttons `[Both +]` / `[Both -]`, keyboard `+` / `-`, or standard `Mouse Wheel`.
-- **Panning & Navigation**:
-  - Click & drag with mouse on the graph to pan in any direction.
-  - Arrow keys: Pan Left, Right, Up, Down.
-  - `[Reset View]` button or `R` key to reset to default $[-10, 10]$ viewport.
-- **Customizable Labels and Title**:
-  - Edit fields for **Graph Title**, **X-Axis Label**, and **Y-Axis Label**.
-  - Title renders centered at the top in bold typography.
-  - X-axis label renders centered along the horizontal axis.
-  - Y-axis label renders vertically ($90^\circ$ rotated) along the vertical axis.
-  - Pressing `Enter` in any edit field immediately refreshes and plots the graph.
-- **Visuals & Precision**:
-  - Double-buffered GDI rendering (100% flicker-free).
-  - Adaptive gridlines and auto-calculated "nice" tick intervals ($1, 2, 5 \times 10^k$).
-  - Asymptote & jump discontinuity handling (avoids false vertical connecting lines across poles like in $\tan(x)$ or $1/x$).
-  - Real-time cursor coordinates $(x, y)$ readout at the bottom bar.
+- **Matematisk uttrykkstolker ($f(x)$)**:
+  - Innebygd recursive-descent parser med operatorpresedens og implisitt multiplikasjon (f.eks. `2x`, `3sin(x)`, `(x+1)(x-1)`).
+  - Operatorer: `+`, `-`, `*`, `/`, `^` (potens).
+  - Funksjoner: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, `sqrt`, `cbrt`, `exp`, `ln`, `log10`, `abs`, `floor`, `ceil`.
+  - Konstanter: `pi`, `e`.
+  - Asymptote- og pol-håndtering (unngår vertikale feillinjer ved diskontinuiteter som $\tan(x)$ eller $1/x$).
 
-## Building and Running
+- **Zoom og navigasjon**:
+  - **Zoom kun X-akse**: Knappene `[X +]` / `[X -]`, tastene `X` / `Shift+X`, eller **`Shift` + rullehjul**.
+  - **Zoom kun Y-akse**: Knappene `[Y +]` / `[Y -]`, tastene `Y` / `Shift+Y`, eller **`Ctrl` + rullehjul**.
+  - **Zoom begge samtidig**: Knappene `[Begge +]` / `[Begge -]`, tastene `+` / `-`, eller standard **rullehjul**.
+  - **Panorering (dra grafen)**: Klikk og dra med venstre musetast, eller bruk piltastene.
+  - **Nullstill**: Knapp `[Nullstill visning]` eller tast `R` for å gjenopprette standard $[-10, 10]$ utsnitt.
 
-### With GCC (MinGW):
+- **Tilpassbare akseetiketter og tittel**:
+  - Egne tekstfelt for **Tittel**, **X-akseetikett** og **Y-akseetikett**.
+  - Tittel vises sentrert i toppen i fet skrift.
+  - X-aksetekst vises under aksen.
+  - Y-aksetekst vises vertikalt ($90^\circ$ rotert) langs aksen.
+  - Trykk `Enter` i ethvert tekstfelt for å oppdatere grafen umiddelbart.
+
+- **Eksport til Excel med innebygd bilde (.xlsx)**:
+  - Egen knapp **`[Eksporter til Excel (.xlsx)]`** eller hurtigtast **`Ctrl + S`**.
+  - Åpner standard Windows lagre-dialog.
+  - Genererer en ekte OpenXML Excel-arbeidsbok (`.xlsx`) med:
+    1. **Datatabell:** 1000 nøyaktig beregnede $(x, f(x))$-punkter over gjeldende utsnitt.
+    2. **Metadata:** Tittel, funksjonsuttrykk, definisjonsmengde og verdimengde.
+    3. **Innebygd grafbilde:** Høyoppløselig bilde av funksjonsplottet plassert direkte ved siden av datatabellen.
+  - Spør automatisk om du vil åpne filen direkte i Excel etter eksport.
+
+## Kompilering og kjøring
+
+### Med GCC (MinGW):
 ```bash
-gcc -O2 -Wall -Wextra main.c -o plotter.exe -lgdi32 -luser32 -mwindows
+gcc -O2 -Wall -Wextra main.c -o plotter.exe -lgdi32 -luser32 -lcomdlg32 -lshell32 -mwindows
 ./plotter.exe
 ```
 
-Or simply run the provided `build.bat`.
-
+Eller kjør `build.bat`.
