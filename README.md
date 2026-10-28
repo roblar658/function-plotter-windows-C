@@ -2,7 +2,7 @@
 
 A lightweight, standalone desktop function plotting application written in pure C for Windows (Win32 API & GDI). Zero external dependencies required.
 
-<img width="1435" height="1003" alt="image" src="https://github.com/user-attachments/assets/f73c71eb-fd18-4e8c-9511-489d985dc9fd" />
+<img width="1441" height="996" alt="image" src="https://github.com/user-attachments/assets/e715640e-64e5-4b1a-bf17-46bde94a5799" />
 
 ## Features
 
