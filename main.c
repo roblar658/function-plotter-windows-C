@@ -5,6 +5,8 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <shobjidl.h>
+#include <objbase.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1016,8 +1018,8 @@ static void zip_add(ZipWriter* zw, const char* name, const void* data, size_t si
     if (e->data) memcpy(e->data, data, size);
 }
 
-static int zip_write_file(ZipWriter* zw, const char* filename) {
-    FILE* fp = fopen(filename, "wb");
+static int zip_write_file_w(ZipWriter* zw, const wchar_t* filename) {
+    FILE* fp = _wfopen(filename, L"wb");
     if (!fp) return 0;
 
     for (int i = 0; i < zw->count; i++) {
@@ -1123,7 +1125,7 @@ static void xml_escape(const char* in, char* out, size_t out_sz) {
     out[j] = '\0';
 }
 
-static bool export_to_excel(HWND hwnd, const char* filepath) {
+static bool export_to_excel(HWND hwnd, const wchar_t* wfilepath) {
     /* 1. Render Graph to PNG */
     size_t png_size = 0;
     uint8_t* png_data = render_plot_to_png(1000, 600, &png_size);
@@ -1256,51 +1258,109 @@ static bool export_to_excel(HWND hwnd, const char* filepath) {
     zip_add(&zw, "xl/worksheets/sheet1.xml", sb.data, sb.len);
     zip_add(&zw, "xl/media/image1.png", png_data, png_size);
 
-    int ok = zip_write_file(&zw, filepath);
+    int ok = zip_write_file_w(&zw, wfilepath);
 
     free(png_data);
     free(sb.data);
 
     if (ok) {
-        char msg[600];
-        snprintf(msg, sizeof(msg),
-            "Excel-filen ble vellykket lagret til:\n%s\n\n"
-            "Innhold:\n"
-            "  - 1000 datapunkter for x og f(x)\n"
-            "  - Tittel, formel og akseopplysninger\n"
-            "  - Innebygd bilde av funksjonsgrafen\n\n"
-            "Vil du åpne filen i Excel nå?", filepath);
-        if (MessageBoxA(hwnd, msg, "Eksport til Excel fullført", MB_YESNO | MB_ICONINFORMATION) == IDYES) {
-            ShellExecuteA(hwnd, "open", filepath, NULL, NULL, SW_SHOWNORMAL);
+        wchar_t msg[1024];
+        _snwprintf(msg, sizeof(msg) / sizeof(msg[0]),
+            L"Excel-filen ble vellykket lagret til:\n%ls\n\n"
+            L"Innhold:\n"
+            L"  - 1000 datapunkter for x og f(x)\n"
+            L"  - Tittel, formel og akseopplysninger\n"
+            L"  - Innebygd bilde av funksjonsgrafen\n\n"
+            L"Vil du åpne filen i Excel nå?", wfilepath);
+        if (MessageBoxW(hwnd, msg, L"Eksport til Excel fullført", MB_YESNO | MB_ICONINFORMATION) == IDYES) {
+            ShellExecuteW(hwnd, L"open", wfilepath, NULL, NULL, SW_SHOWNORMAL);
         }
         return true;
     } else {
-        MessageBoxA(hwnd, "Feil under skriving av Excel-filen.", "Eksportfeil", MB_ICONERROR);
+        MessageBoxW(hwnd, L"Feil under skriving av Excel-filen.\nKontroller at du har tilgang til mappen og at filen ikke allerede er åpen.", L"Eksportfeil", MB_ICONERROR);
         return false;
     }
 }
 
-static bool export_to_png_file(HWND hwnd, const char* filepath) {
+static bool export_to_png_file(HWND hwnd, const wchar_t* wfilepath) {
     size_t png_size = 0;
     uint8_t* png_data = render_plot_to_png(1200, 750, &png_size);
     if (!png_data || png_size == 0) {
-        MessageBoxA(hwnd, "Kunne ikke generere bilde av grafen.", "Eksportfeil", MB_ICONERROR);
+        MessageBoxW(hwnd, L"Kunne ikke generere bilde av grafen.", L"Eksportfeil", MB_ICONERROR);
         return false;
     }
-    FILE* fp = fopen(filepath, "wb");
+    FILE* fp = _wfopen(wfilepath, L"wb");
     if (!fp) {
         free(png_data);
-        MessageBoxA(hwnd, "Kunne ikke åpne filen for skriving.", "Eksportfeil", MB_ICONERROR);
+        MessageBoxW(hwnd, L"Kunne ikke åpne filen for skriving.\nKontroller at du har tilgang til mappen.", L"Eksportfeil", MB_ICONERROR);
         return false;
     }
     fwrite(png_data, 1, png_size, fp);
     fclose(fp);
     free(png_data);
 
-    char msg[MAX_PATH + 100];
-    snprintf(msg, sizeof(msg), "Grafen ble vellykket lagret som bilde til:\n%s", filepath);
-    MessageBoxA(hwnd, msg, "Lagret bilde", MB_OK | MB_ICONINFORMATION);
+    wchar_t msg[MAX_PATH + 100];
+    _snwprintf(msg, sizeof(msg)/sizeof(msg[0]), L"Grafen ble vellykket lagret som bilde til:\n%ls", wfilepath);
+    MessageBoxW(hwnd, msg, L"Lagret bilde", MB_OK | MB_ICONINFORMATION);
     return true;
+}
+
+static bool prompt_save_dialog(HWND hwnd, const wchar_t* default_name, const wchar_t* default_ext,
+                               const COMDLG_FILTERSPEC* filters, UINT num_filters,
+                               wchar_t* out_path, size_t max_out) {
+    bool success = false;
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+    IFileSaveDialog* pFileSave = NULL;
+    HRESULT hr = CoCreateInstance(&CLSID_FileSaveDialog, NULL, CLSCTX_INPROC_SERVER,
+                                  &IID_IFileSaveDialog, (void**)&pFileSave);
+    if (SUCCEEDED(hr) && pFileSave) {
+        DWORD dwFlags = 0;
+        pFileSave->lpVtbl->GetOptions(pFileSave, &dwFlags);
+        pFileSave->lpVtbl->SetOptions(pFileSave, dwFlags | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT | FOS_PATHMUSTEXIST);
+        pFileSave->lpVtbl->SetFileName(pFileSave, default_name);
+        pFileSave->lpVtbl->SetDefaultExtension(pFileSave, default_ext);
+        pFileSave->lpVtbl->SetFileTypes(pFileSave, num_filters, filters);
+        pFileSave->lpVtbl->SetFileTypeIndex(pFileSave, 1);
+
+        hr = pFileSave->lpVtbl->Show(pFileSave, hwnd);
+        if (SUCCEEDED(hr)) {
+            IShellItem* pItem = NULL;
+            hr = pFileSave->lpVtbl->GetResult(pFileSave, &pItem);
+            if (SUCCEEDED(hr) && pItem) {
+                PWSTR pszFilePath = NULL;
+                hr = pItem->lpVtbl->GetDisplayName(pItem, SIGDN_FILESYSPATH, &pszFilePath);
+                if (SUCCEEDED(hr) && pszFilePath) {
+                    wcsncpy(out_path, pszFilePath, max_out - 1);
+                    out_path[max_out - 1] = L'\0';
+                    CoTaskMemFree(pszFilePath);
+                    success = true;
+                }
+                pItem->lpVtbl->Release(pItem);
+            }
+        }
+        pFileSave->lpVtbl->Release(pFileSave);
+    } else {
+        /* Fallback to GetSaveFileNameW with modern Explorer flags */
+        wcsncpy(out_path, default_name, max_out - 1);
+        out_path[max_out - 1] = L'\0';
+
+        OPENFILENAMEW ofn;
+        memset(&ofn, 0, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = hwnd;
+        ofn.lpstrFile = out_path;
+        ofn.nMaxFile = (DWORD)max_out;
+        ofn.lpstrDefExt = default_ext;
+        ofn.Flags = OFN_EXPLORER | OFN_OVERWRITEPROMPT | OFN_ENABLESIZING | OFN_NOCHANGEDIR;
+
+        if (GetSaveFileNameW(&ofn)) {
+            success = true;
+        }
+    }
+
+    CoUninitialize();
+    return success;
 }
 
 static void create_main_menu(HWND hwnd) {
@@ -1459,35 +1519,23 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 case ID_FILE_SAVE:
                 case ID_FILE_SAVE_EXCEL:
                 case ID_BTN_EXCEL: {
-                    char szFile[MAX_PATH] = "funksjonsgraf.xlsx";
-                    OPENFILENAMEA ofn;
-                    memset(&ofn, 0, sizeof(ofn));
-                    ofn.lStructSize = sizeof(ofn);
-                    ofn.hwndOwner = hwnd;
-                    ofn.lpstrFilter = "Excel-arbeidsbok (*.xlsx)\0*.xlsx\0Alle filer (*.*)\0*.*\0";
-                    ofn.lpstrFile = szFile;
-                    ofn.nMaxFile = sizeof(szFile);
-                    ofn.lpstrDefExt = "xlsx";
-                    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-
-                    if (GetSaveFileNameA(&ofn)) {
+                    static const COMDLG_FILTERSPEC filters[] = {
+                        { L"Excel-arbeidsbok (*.xlsx)", L"*.xlsx" },
+                        { L"Alle filer (*.*)", L"*.*" }
+                    };
+                    wchar_t szFile[MAX_PATH] = L"";
+                    if (prompt_save_dialog(hwnd, L"funksjonsgraf.xlsx", L"xlsx", filters, 2, szFile, MAX_PATH)) {
                         export_to_excel(hwnd, szFile);
                     }
                     break;
                 }
                 case ID_FILE_SAVE_PNG: {
-                    char szFile[MAX_PATH] = "funksjonsgraf.png";
-                    OPENFILENAMEA ofn;
-                    memset(&ofn, 0, sizeof(ofn));
-                    ofn.lStructSize = sizeof(ofn);
-                    ofn.hwndOwner = hwnd;
-                    ofn.lpstrFilter = "PNG-bilde (*.png)\0*.png\0Alle filer (*.*)\0*.*\0";
-                    ofn.lpstrFile = szFile;
-                    ofn.nMaxFile = sizeof(szFile);
-                    ofn.lpstrDefExt = "png";
-                    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-
-                    if (GetSaveFileNameA(&ofn)) {
+                    static const COMDLG_FILTERSPEC filters[] = {
+                        { L"PNG-bilde (*.png)", L"*.png" },
+                        { L"Alle filer (*.*)", L"*.*" }
+                    };
+                    wchar_t szFile[MAX_PATH] = L"";
+                    if (prompt_save_dialog(hwnd, L"funksjonsgraf.png", L"png", filters, 2, szFile, MAX_PATH)) {
                         export_to_png_file(hwnd, szFile);
                     }
                     break;
